@@ -3,47 +3,8 @@ import { Ok, type Result } from "ts-results";
 import { z } from "zod";
 import { apiClient } from "@/utils/api.js";
 import type { ApiError } from "@/utils/error.js";
+import { definedOnly, errorResponse, WEBHOOK_EVENTS } from "@/utils/tool.js";
 import type { Repo, RepoPatch, WebhookEvent } from "@/utils/types.js";
-
-type TrustedOverrides = {
-  trustedNetwork?: boolean;
-  trustedVolumes?: boolean;
-  trustedSecurity?: boolean;
-};
-
-const resolveTrustedPatch = async (
-  repoId: number,
-  overrides: TrustedOverrides
-): Promise<Result<RepoPatch["trusted"], ApiError>> => {
-  const { trustedNetwork, trustedVolumes, trustedSecurity } = overrides;
-
-  if (
-    trustedNetwork === undefined &&
-    trustedVolumes === undefined &&
-    trustedSecurity === undefined
-  ) {
-    return Ok(undefined);
-  }
-
-  const currentRepo = await apiClient.get<Repo>(`/repos/${repoId}`);
-
-  return currentRepo.map((repo) => ({
-    network: trustedNetwork ?? repo.trusted.network,
-    volumes: trustedVolumes ?? repo.trusted.volumes,
-    security: trustedSecurity ?? repo.trusted.security,
-  }));
-};
-
-const WEBHOOK_EVENTS = [
-  "push",
-  "pull_request",
-  "pull_request_closed",
-  "tag",
-  "release",
-  "deployment",
-  "cron",
-  "manual",
-] as const satisfies readonly WebhookEvent[];
 
 const updatedRepositoryContext = (repoId: number, repo: Repo) =>
   JSON.stringify({
@@ -62,42 +23,77 @@ const updatedRepositoryContext = (repoId: number, repo: Repo) =>
     },
   });
 
-const errorResponse = (error: ApiError, context: string) => ({
-  content: [{ type: "text" as const, text: error.toContext(context) }],
-  isError: true,
-});
-
 type UpdateRepositoryFields = {
   allowPull?: boolean;
   allowDeploy?: boolean;
   requireApproval?: RepoPatch["require_approval"];
+  approvalAllowedUsers?: string[];
   timeout?: number;
   visibility?: RepoPatch["visibility"];
   configFile?: string;
   cancelPreviousPipelineEvents?: WebhookEvent[];
-  trusted?: RepoPatch["trusted"];
+  netrcTrusted?: string[];
+  trustedNetwork?: boolean;
+  trustedVolumes?: boolean;
+  trustedSecurity?: boolean;
+  configExtensionEndpoint?: string;
+  configExtensionExclusive?: boolean;
+  configExtensionNetrc?: boolean;
+  registryExtensionEndpoint?: string;
+  registryExtensionNetrc?: boolean;
+  secretExtensionEndpoint?: string;
+  secretExtensionNetrc?: boolean;
 };
 
-const buildRepoPatch = (fields: UpdateRepositoryFields): RepoPatch => ({
-  ...(fields.allowPull === undefined ? {} : { allow_pr: fields.allowPull }),
-  ...(fields.allowDeploy === undefined
-    ? {}
-    : { allow_deploy: fields.allowDeploy }),
-  ...(fields.requireApproval === undefined
-    ? {}
-    : { require_approval: fields.requireApproval }),
-  ...(fields.timeout === undefined ? {} : { timeout: fields.timeout }),
-  ...(fields.visibility === undefined ? {} : { visibility: fields.visibility }),
-  ...(fields.configFile === undefined
-    ? {}
-    : { config_file: fields.configFile }),
-  ...(fields.cancelPreviousPipelineEvents === undefined
-    ? {}
-    : {
-        cancel_previous_pipeline_events: fields.cancelPreviousPipelineEvents,
-      }),
-  ...(fields.trusted === undefined ? {} : { trusted: fields.trusted }),
-});
+// Older servers replace the whole trusted object, so merge the provided flags
+// into the current ones to avoid resetting the others
+const resolveTrustedPatch = async (
+  repoId: number,
+  fields: UpdateRepositoryFields
+): Promise<Result<RepoPatch["trusted"], ApiError>> => {
+  const { trustedNetwork, trustedVolumes, trustedSecurity } = fields;
+
+  if (
+    trustedNetwork === undefined &&
+    trustedVolumes === undefined &&
+    trustedSecurity === undefined
+  ) {
+    return Ok(undefined);
+  }
+
+  const currentRepo = await apiClient.get<Repo>(`/repos/${repoId}`);
+
+  return currentRepo.map((repo) => ({
+    network: trustedNetwork ?? repo.trusted.network,
+    volumes: trustedVolumes ?? repo.trusted.volumes,
+    security: trustedSecurity ?? repo.trusted.security,
+  }));
+};
+
+// The API applies only the fields present in the body, so omitted fields are left as-is
+const buildRepoPatch = (
+  fields: UpdateRepositoryFields,
+  trusted: RepoPatch["trusted"]
+): RepoPatch =>
+  definedOnly({
+    allow_pr: fields.allowPull,
+    allow_deploy: fields.allowDeploy,
+    require_approval: fields.requireApproval,
+    approval_allowed_users: fields.approvalAllowedUsers,
+    timeout: fields.timeout,
+    visibility: fields.visibility,
+    config_file: fields.configFile,
+    cancel_previous_pipeline_events: fields.cancelPreviousPipelineEvents,
+    netrc_trusted: fields.netrcTrusted,
+    trusted,
+    config_extension_endpoint: fields.configExtensionEndpoint,
+    config_extension_exclusive: fields.configExtensionExclusive,
+    config_extension_netrc: fields.configExtensionNetrc,
+    registry_extension_endpoint: fields.registryExtensionEndpoint,
+    registry_extension_netrc: fields.registryExtensionNetrc,
+    secret_extension_endpoint: fields.secretExtensionEndpoint,
+    secret_extension_netrc: fields.secretExtensionNetrc,
+  });
 
 export const registerUpdateRepositoryTool = (server: McpServer) =>
   server.registerTool(
@@ -120,6 +116,12 @@ export const registerUpdateRepositoryTool = (server: McpServer) =>
           .enum(["none", "forks", "pull_requests", "all_events"])
           .optional()
           .describe("Which events require manual approval before running"),
+        approvalAllowedUsers: z
+          .array(z.string().min(1))
+          .optional()
+          .describe(
+            "Users whose pipelines never require approval (empty array clears the list)"
+          ),
         timeout: z
           .number()
           .int()
@@ -142,6 +144,12 @@ export const registerUpdateRepositoryTool = (server: McpServer) =>
           .describe(
             "Webhook events for which previous running pipelines are canceled when a new one starts"
           ),
+        netrcTrusted: z
+          .array(z.string().min(1))
+          .optional()
+          .describe(
+            "Plugin images that are allowed to receive the netrc (forge clone) credentials"
+          ),
         trustedNetwork: z
           .boolean()
           .optional()
@@ -158,6 +166,42 @@ export const registerUpdateRepositoryTool = (server: McpServer) =>
           .describe(
             "Trusted: allow pipeline containers to access security privileges"
           ),
+        configExtensionEndpoint: z
+          .string()
+          .optional()
+          .describe(
+            "URL of a config extension service that provides or rewrites pipeline configs (empty string disables it)"
+          ),
+        configExtensionExclusive: z
+          .boolean()
+          .optional()
+          .describe(
+            "Use only the config extension's configs instead of merging them with the repository's"
+          ),
+        configExtensionNetrc: z
+          .boolean()
+          .optional()
+          .describe("Send netrc credentials to the config extension"),
+        registryExtensionEndpoint: z
+          .string()
+          .optional()
+          .describe(
+            "URL of a registry extension service that provides registry credentials (empty string disables it)"
+          ),
+        registryExtensionNetrc: z
+          .boolean()
+          .optional()
+          .describe("Send netrc credentials to the registry extension"),
+        secretExtensionEndpoint: z
+          .string()
+          .optional()
+          .describe(
+            "URL of a secret extension service that provides secrets (empty string disables it)"
+          ),
+        secretExtensionNetrc: z
+          .boolean()
+          .optional()
+          .describe("Send netrc credentials to the secret extension"),
       },
       annotations: {
         readOnlyHint: false,
@@ -165,53 +209,24 @@ export const registerUpdateRepositoryTool = (server: McpServer) =>
         idempotentHint: true,
       },
     },
-    async ({
-      repoId,
-      allowPull,
-      allowDeploy,
-      requireApproval,
-      timeout,
-      visibility,
-      configFile,
-      cancelPreviousPipelineEvents,
-      trustedNetwork,
-      trustedVolumes,
-      trustedSecurity,
-    }) => {
-      const context = `updating repository ${repoId}`;
-
-      const trustedResult = await resolveTrustedPatch(repoId, {
-        trustedNetwork,
-        trustedVolumes,
-        trustedSecurity,
-      });
-
-      if (trustedResult.err) {
-        return errorResponse(trustedResult.val, context);
+    async ({ repoId, ...fields }) => {
+      const trusted = await resolveTrustedPatch(repoId, fields);
+      if (trusted.err) {
+        return errorResponse(trusted.val, `updating repository ${repoId}`);
       }
 
-      const patch = buildRepoPatch({
-        allowPull,
-        allowDeploy,
-        requireApproval,
-        timeout,
-        visibility,
-        configFile,
-        cancelPreviousPipelineEvents,
-        trusted: trustedResult.val,
-      });
+      const result = await apiClient.patch<Repo>(
+        `/repos/${repoId}`,
+        buildRepoPatch(fields, trusted.val)
+      );
 
-      const result = await apiClient.patch<Repo>(`/repos/${repoId}`, patch);
-
-      if (result.err) {
-        return errorResponse(result.val, context);
-      }
+      const text = result
+        .map((val) => updatedRepositoryContext(repoId, val))
+        .mapErr((err) => err.toContext(`updating repository ${repoId}`));
 
       return {
-        content: [
-          { type: "text", text: updatedRepositoryContext(repoId, result.val) },
-        ],
-        isError: false,
+        content: [{ type: "text", text: text.val }],
+        isError: result.err,
       };
     }
   );

@@ -19,6 +19,18 @@ export type RequestOptions = {
 
 type Response<T> = Promise<Result<T, ApiError>>;
 
+const parseBody = (body: string): unknown => {
+  if (body === "") {
+    return null;
+  }
+
+  try {
+    return JSON.parse(body);
+  } catch {
+    return body;
+  }
+};
+
 /**
  * Woodpecker API client for making authenticated requests
  */
@@ -53,9 +65,8 @@ export class WoodpeckerApiClient {
         return Err(new ApiError(response.status, await response.text()));
       }
 
-      const res = await response.json().catch(() => response.text());
-
-      return Ok(res as T);
+      // Read the body once: it may be empty (204), JSON, or plain text
+      return Ok(parseBody(await response.text()) as T);
     } catch (error) {
       return Err(
         new ApiError(

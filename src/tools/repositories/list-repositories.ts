@@ -27,7 +27,8 @@ export const registerListRepositoriesTool = (server: McpServer) =>
     "list_repositories",
     {
       title: "List Repositories",
-      description: `List all repositories with optional filtering. Returns repository metadata including configuration, status, and access details.
+      description: `List all repositories on the server with optional filtering. Returns repository metadata including configuration, status, and access details.
+Requires server admin access; non-admin users should use list_user_repositories instead.
 If required information is not provided, use the git command or any available tool to get more context about the current commit, the repository, or the author of the commit.`,
       inputSchema: {
         page: z
@@ -45,11 +46,13 @@ If required information is not provided, use the git command or any available to
           .optional()
           .default(50)
           .describe("Number of repositories per page"),
-        active: z.boolean().optional().describe("Filter by active status"),
-        trusted: z.boolean().optional().describe("Filter by trusted status"),
+        active: z
+          .boolean()
+          .optional()
+          .describe("Only list active repositories"),
       },
     },
-    async ({ page, perPage, active, trusted }) => {
+    async ({ page, perPage, active }) => {
       const params = new URLSearchParams({
         page: page.toString(),
         perPage: perPage.toString(),
@@ -57,9 +60,6 @@ If required information is not provided, use the git command or any available to
 
       if (active !== undefined) {
         params.append("active", active.toString());
-      }
-      if (trusted !== undefined) {
-        params.append("trusted", trusted.toString());
       }
 
       const result = await apiClient.get<Repo[]>(`/repos?${params.toString()}`);

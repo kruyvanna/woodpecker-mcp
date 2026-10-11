@@ -35,7 +35,7 @@ export const registerDeclinePipelineTool = (server: McpServer) =>
       },
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: false,
       },
     },

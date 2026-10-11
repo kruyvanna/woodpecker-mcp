@@ -1,7 +1,22 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { apiClient } from "@/utils/api.js";
-import type { Pipeline } from "@/utils/types.js";
+import { WEBHOOK_EVENTS } from "@/utils/tool.js";
+import type { Pipeline, StatusValue } from "@/utils/types.js";
+
+const STATUS_VALUES = [
+  "skipped",
+  "pending",
+  "running",
+  "success",
+  "failure",
+  "killed",
+  "canceled",
+  "error",
+  "blocked",
+  "declined",
+  "created",
+] as const satisfies readonly StatusValue[];
 
 const pipelinesContext = (repoId: number, pipelines: Pipeline[]) =>
   JSON.stringify({
@@ -59,9 +74,38 @@ If required information is not provided, use the git command or any available to
           .describe(
             "Only return pipelines after this RFC3339 date (e.g., '2023-12-01T10:00:00Z')"
           ),
+        branch: z
+          .string()
+          .optional()
+          .describe("Only return pipelines for this branch"),
+        event: z
+          .array(z.enum(WEBHOOK_EVENTS))
+          .min(1)
+          .optional()
+          .describe("Only return pipelines triggered by one of these events"),
+        ref: z
+          .string()
+          .optional()
+          .describe(
+            "Only return pipelines whose git ref contains this string (e.g. 'refs/tags/v1')"
+          ),
+        status: z
+          .enum(STATUS_VALUES)
+          .optional()
+          .describe("Only return pipelines with this status"),
       },
     },
-    async ({ repoId, page, perPage, before, after }) => {
+    async ({
+      repoId,
+      page,
+      perPage,
+      before,
+      after,
+      branch,
+      event,
+      ref,
+      status,
+    }) => {
       const params = new URLSearchParams({
         page: page.toString(),
         perPage: perPage.toString(),
@@ -72,6 +116,18 @@ If required information is not provided, use the git command or any available to
       }
       if (after) {
         params.append("after", after);
+      }
+      if (branch) {
+        params.append("branch", branch);
+      }
+      if (event) {
+        params.append("event", event.join(","));
+      }
+      if (ref) {
+        params.append("ref", ref);
+      }
+      if (status) {
+        params.append("status", status);
       }
 
       const result = await apiClient.get<Pipeline[]>(

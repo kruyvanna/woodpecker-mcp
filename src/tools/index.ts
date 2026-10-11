@@ -1,10 +1,30 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerAgentsTools } from "./agents";
+import { registerCronsTools } from "./crons";
+import { registerForgesTools } from "./forges";
 import { registerLogsTools } from "./logs";
+import { registerOrgsTools } from "./orgs";
 import { registerPipelinesTools } from "./pipelines";
+import { registerQueueTools } from "./queue";
+import { registerRegistriesTools } from "./registries";
 import { registerRepositoriesTools } from "./repositories";
+import { registerSecretsTools } from "./secrets";
+import { registerServerTools } from "./server";
+import { registerUserTools } from "./user";
+import { registerUsersTools } from "./users";
 
 export const registerTools = (server: McpServer) => {
   registerLogsTools(server);
   registerPipelinesTools(server);
   registerRepositoriesTools(server);
+  registerSecretsTools(server);
+  registerRegistriesTools(server);
+  registerCronsTools(server);
+  registerUserTools(server);
+  registerUsersTools(server);
+  registerOrgsTools(server);
+  registerAgentsTools(server);
+  registerForgesTools(server);
+  registerQueueTools(server);
+  registerServerTools(server);
 };

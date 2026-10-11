@@ -49,7 +49,11 @@ export const registerGetPipelineTool = (server: McpServer) =>
 If required information is not provided, use the git command or any available tool to get more context about the current commit, the repository, or the author of the commit.`,
       inputSchema: {
         repoId: z.number().int().positive().describe("The repository ID"),
-        number: z.number().int().positive().describe("The pipeline number"),
+        number: z
+          .union([z.number().int().positive(), z.literal("latest")])
+          .describe(
+            "The pipeline number, or 'latest' for the most recent pipeline"
+          ),
       },
     },
     async ({ repoId, number }) => {
